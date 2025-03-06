@@ -26,4 +26,8 @@ sysinfo = "0.29"
 reqwest = "0.12.12"
 zip = "2.2.3"
 chrono = "0.4.40"
+futures-util = "0.3.31"
+tokio = "1.43.0"
+tokio-tungstenite = "0.26.2"
+tungstenite = "0.26.2"
 
