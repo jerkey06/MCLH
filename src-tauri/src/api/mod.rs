@@ -1,3 +1,3 @@
 ﻿mod rest;
 mod websocket;
-mod events;
+pub(crate) mod events;
