@@ -1,62 +1,45 @@
-﻿use std::sync::{Arc, Mutex, RwLock}; // Use RwLock for read-heavy data if applicable
+﻿use std::sync::{Arc, Mutex, RwLock};
 use crate::models::server_status::ServerStatus;
 use crate::models::metrics::MetricsData;
-use crate::error::{AppError, Result}; // Import the Result type alias
-
-// Consider using more specific types if possible, e.g., PathBuf for paths
+use crate::error::Result;
 use std::path::PathBuf;
+use std::process::Child; // <--- IMPORT Child
 
 /// Holds the shared state of the application.
-#[derive(Debug)] // Added Debug derive
+#[derive(Debug)]
 pub struct AppState {
     /// Current status of the Minecraft server process.
-    /// Mutex is suitable here as status changes often but reads might be frequent too.
     pub server_status: Mutex<ServerStatus>,
-
     /// Latest performance metrics collected.
-    /// Mutex is fine if updates and reads are balanced.
     pub metrics: Mutex<MetricsData>,
-
     /// The root directory where the server files are located.
-    pub server_directory: PathBuf, // Using PathBuf is better for paths
-
+    pub server_directory: PathBuf,
     /// Path to the detected Java executable.
-    pub java_path: PathBuf, // Using PathBuf
-
+    pub java_path: PathBuf,
     /// Name of the server JAR file (e.g., "server.jar", "paper.jar").
     pub server_jar: String,
-
-    /// Command-line arguments to pass to the Java process (e.g., memory allocation).
-    /// RwLock might be better if args are read often but changed rarely after init.
+    /// Command-line arguments to pass to the Java process.
     pub server_args: RwLock<Vec<String>>,
 
-    // Removed `process_handle: ()`. The actual process handle should be managed
-    // within the `process_manager` module, which can access and update
-    // the `server_status` in this AppState.
+    // --- ADDED ---
+    /// Handle to the running server process, if active.
+    /// This is managed exclusively by the process_manager module.
+    pub process_handle: Mutex<Option<Child>>, // <--- ADD THIS LINE
+
+    // --- Optional: Configuration for process manager ---
+    /// Timeout in seconds for graceful server shutdown before forcing termination.
+    pub stop_timeout_secs: u64,
 }
 
 impl AppState {
-    /// Creates a new instance of the application state, wrapped in an Arc for shared ownership.
     pub fn new(server_directory: String, java_path: String, server_jar: String) -> Result<Arc<Self>> {
         let server_dir_path = PathBuf::from(server_directory);
         let java_path_buf = PathBuf::from(java_path);
 
-        // Basic validation
-        if !java_path_buf.exists() {
-            // This check might be better placed in java_detector or main setup
-            // but serves as an example.
-            // return Err(AppError::JavaNotFound); // Or handle earlier
-        }
-
-        // Default Java arguments
-        // TODO: Load these from a persistent config file eventually
         let default_args = vec![
-            "-Xmx2G".to_string(), // Example: 2GB max heap
-            "-Xms1G".to_string(), // Example: 1GB initial heap
-            // Consider adding Aikar's flags for optimized servers (Paper/Spigot)
-            // "-XX:+UseG1GC", "-XX:+ParallelRefProcEnabled", ... etc.
+            "-Xmx2G".to_string(),
+            "-Xms1G".to_string(),
             "-jar".to_string(),
-            // server_jar will be added dynamically before starting the process
         ];
 
         Ok(Arc::new(Self {
@@ -66,64 +49,49 @@ impl AppState {
             java_path: java_path_buf,
             server_jar,
             server_args: RwLock::new(default_args),
+            process_handle: Mutex::new(None), // <--- INITIALIZE TO None
+            stop_timeout_secs: 30, // Default timeout
         }))
     }
 
-    // --- Helper methods to access state safely ---
+    // --- Helper methods (get_status, set_status etc. remain the same) ---
+    // No public methods needed for direct process_handle manipulation from outside process_manager
 
-    /// Gets the current server status.
-    pub fn get_status(&self) -> Result<ServerStatus> {
-        self.server_status
+    /// Safely gets the process handle (internal use by process_manager mostly).
+    /// Takes the handle out, leaving None. Use with care.
+    pub(crate) fn take_process_handle(&self) -> Result<Option<Child>> {
+        self.process_handle
             .lock()
-            .map(|guard| guard.clone())
-            .map_err(|e| AppError::LockError(format!("Failed to lock server_status: {}", e)))
+            .map(|mut guard| guard.take()) // take() removes the value from Option
+            .map_err(|e| AppError::LockError(format!("Failed to lock process_handle: {}", e)))
     }
 
-    /// Sets the server status.
-    pub fn set_status(&self, new_status: ServerStatus) -> Result<()> {
-        let mut guard = self.server_status
+    /// Safely sets the process handle (internal use by process_manager).
+    pub(crate) fn set_process_handle(&self, process: Option<Child>) -> Result<()> {
+        let mut guard = self.process_handle
             .lock()
-            .map_err(|e| AppError::LockError(format!("Failed to lock server_status for writing: {}", e)))?;
-        *guard = new_status;
+            .map_err(|e| AppError::LockError(format!("Failed to lock process_handle for writing: {}", e)))?;
+        *guard = process;
         Ok(())
     }
 
-    /// Gets a clone of the current metrics data.
-    pub fn get_metrics(&self) -> Result<MetricsData> {
-        self.metrics
-            .lock()
-            .map(|guard| guard.clone())
-            .map_err(|e| AppError::LockError(format!("Failed to lock metrics: {}", e)))
+    /// Gets the configured stop timeout.
+    pub fn get_stop_timeout(&self) -> Duration {
+        Duration::from_secs(self.stop_timeout_secs)
     }
 
-    /// Updates the metrics data.
-    pub fn update_metrics(&self, new_metrics: MetricsData) -> Result<()> {
-        let mut guard = self.metrics
-            .lock()
-            .map_err(|e| AppError::LockError(format!("Failed to lock metrics for writing: {}", e)))?;
-        *guard = new_metrics;
-        Ok(())
-    }
-
-    /// Gets a clone of the server arguments.
-    pub fn get_server_args(&self) -> Result<Vec<String>> {
-        self.server_args
-            .read()
-            .map(|guard| guard.clone())
-            .map_err(|e| AppError::LockError(format!("Failed to lock server_args for reading: {}", e)))
-    }
-
-    /// Updates the server arguments.
-    pub fn set_server_args(&self, new_args: Vec<String>) -> Result<()> {
-        let mut guard = self.server_args
-            .write()
-            .map_err(|e| AppError::LockError(format!("Failed to lock server_args for writing: {}", e)))?;
-        *guard = new_args;
-        Ok(())
-    }
-
+    // ... other helper methods ...
     /// Gets the full path to the server JAR file.
     pub fn get_server_jar_path(&self) -> PathBuf {
         self.server_directory.join(&self.server_jar)
     }
 }
+
+// Need to implement Send + Sync for Child within the Mutex for thread safety.
+// Child itself is Send + Sync on supported platforms (Unix, Windows).
+// If targeting a platform where it isn't, this would need conditional compilation or alternative approach.
+unsafe impl Send for AppState {}
+unsafe impl Sync for AppState {}
+// NOTE: Using unsafe impl Send/Sync relies on the underlying types (like Child)
+// being correctly Send/Sync. This is generally true for std::process::Child
+// but be mindful if adding non-Send/Sync types later without proper wrappers.

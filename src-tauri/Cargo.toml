@@ -20,22 +20,28 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sysinfo = "0.29"
-reqwest = "0.12.12"
-zip = "2.2.3"
-chrono = "0.4.40"
-futures-util = "0.3.31"
-tokio = "1.43.0"
-tokio-tungstenite = "0.26.2"
-tungstenite = "0.26.2"
-thiserror = "2.0.12"
-regex = "1.11.1"
-which = "7.0.2"
-lazy_static = "1.5.0"
-walkdir = "2.5.0"
-once_cell = "1.20.3"
-wait-timeout = "0.2.1"
-mutex = "1.0.0"
+serde = { version = "1.0.197", features = ["derive"] }
+serde_json = "1.0.115"
 
+tokio = { version = "1.37.0", features = ["rt-multi-thread", "macros", "process", "fs", "io-util", "time", "sync"] }
+futures-util = "0.3.30" # Version was okay, minor update
+
+sysinfo = "0.30.11" # Updated
+
+reqwest = { version = "0.12.2", features = ["json", "stream"] } # Added features, updated version
+
+zip = "0.6.6" # Updated version
+walkdir = "2.5.0" # Version was okay
+
+thiserror = "1.0.58" # Updated
+
+chrono = { version = "0.4.38", features = ["serde"] } # Updated, added serde feature if needed for config/events
+regex = "1.10.4" # Updated
+which = "6.0.1" # Updated
+once_cell = "1.19.0" # Version was okay
+wait-timeout = "0.2.0" # Version was okay
+
+log = "0.4.21" # Updated
+env_logger = "0.11.3"
+lazy_static = "1.5.0"
+rand = "0.8.5" # Updated

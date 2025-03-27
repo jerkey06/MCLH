@@ -1,110 +1,238 @@
-﻿use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
-use std::sync::Arc;
-use std::collections::HashMap;
+﻿// src/config/server_properties.rs
 
 use crate::app_state::AppState;
 use crate::error::{AppError, Result};
+use crate::models::config::ServerConfig; // Import the ServerConfig model
+use log::{debug, error, info, warn};
+use std::collections::HashMap;
+use std::fs::{self, File};
+use std::io::{self, BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-pub fn read_properties(state: Arc<AppState>) -> Result<HashMap<String, String>> {
-    let server_dir = &state.server_directory;
-    let properties_path = Path::new(server_dir).join("server.properties");
-
-    if !properties_path.exists() {
-        return Ok(HashMap::new());
-    }
-
-    let file = File::open(properties_path)?;
-    let reader = BufReader::new(file);
-
-    let mut properties = HashMap::new();
-
-    for line in reader.lines() {
-        let line = line?;
-        let line = line.trim();
-
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-
-        if let Some(i) = line.find('=') {
-            let key = line[..i].trim().to_string();
-            let value = line[(i + 1)..].trim().to_string();
-            properties.insert(key, value);
-        }
-    }
-
-    Ok(properties)
+/// Returns the full path to the server.properties file.
+fn get_properties_path(state: &AppState) -> PathBuf {
+    state.server_directory.join("server.properties")
 }
 
-pub fn update_properties(
-    new_properties: Vec<(String, String)>,
-    state: Arc<AppState>
-) -> Result<()> {
-    let server_dir = &state.server_directory;
-    let properties_path = Path::new(server_dir).join("server.properties");
+/// Reads the `server.properties` file into a HashMap.
+/// Skips empty lines and lines starting with '#'.
+/// Returns an empty HashMap if the file doesn't exist.
+pub fn read_properties_file(state: &Arc<AppState>) -> Result<HashMap<String, String>> {
+    let properties_path = get_properties_path(state);
+    debug!("Reading properties file: {}", properties_path.display());
 
-    let mut properties = if properties_path.exists() {
-        read_properties(state.clone())?
-    } else {
-        HashMap::new()
-    };
+    match properties_path.try_exists() {
+        Ok(true) => {
+            let file = File::open(&properties_path).map_err(|e| {
+                AppError::IoError(io::Error::new(
+                    e.kind(),
+                    format!("Failed to open {}: {}", properties_path.display(), e),
+                ))
+            })?;
+            let reader = BufReader::new(file);
+            let mut properties = HashMap::new();
 
-    for (key, value) in new_properties {
-        properties.insert(key, value);
+            for (line_num, line_result) in reader.lines().enumerate() {
+                let line = line_result.map_err(|e| {
+                    AppError::IoError(io::Error::new(
+                        e.kind(),
+                        format!(
+                            "Failed to read line {} from {}: {}",
+                            line_num + 1,
+                            properties_path.display(),
+                            e
+                        ),
+                    ))
+                })?;
+                let line_trimmed = line.trim();
+
+                if line_trimmed.is_empty() || line_trimmed.starts_with('#') {
+                    continue;
+                }
+
+                // Split only on the first '=', allows '=' in values
+                if let Some((key, value)) = line_trimmed.split_once('=') {
+                    let key_trimmed = key.trim().to_string();
+                    let value_trimmed = value.trim().to_string();
+                    if !key_trimmed.is_empty() {
+                        debug!("Read property: '{}' = '{}'", key_trimmed, value_trimmed);
+                        properties.insert(key_trimmed, value_trimmed);
+                    } else {
+                        warn!("Skipping line {} due to empty key: '{}'", line_num + 1, line);
+                    }
+                } else {
+                    warn!(
+                        "Skipping malformed line {} (no '=' found): '{}'",
+                        line_num + 1,
+                        line
+                    );
+                }
+            }
+            info!(
+                "Successfully read {} properties from {}",
+                properties.len(),
+                properties_path.display()
+            );
+            Ok(properties)
+        }
+        Ok(false) => {
+            info!("Properties file not found: {}", properties_path.display());
+            Ok(HashMap::new()) // Return empty map if file doesn't exist
+        }
+        Err(e) => {
+            error!("Failed to check existence of {}: {}", properties_path.display(), e);
+            Err(AppError::IoError(io::Error::new(e.kind(), format!("Failed to check existence of {}: {}", properties_path.display(), e))))
+        }
     }
-
-    write_properties(properties, state)
 }
 
-pub fn write_properties(
-    properties: HashMap<String, String>,
-    state: Arc<AppState>
+/// Writes a HashMap of properties to the `server.properties` file.
+/// Overwrites the file if it exists. Sorts keys alphabetically for consistency.
+pub fn write_properties_file(
+    properties: &HashMap<String, String>, // Borrow properties
+    state: &Arc<AppState>,
 ) -> Result<()> {
-    let server_dir = &state.server_directory;
-    let properties_path = Path::new(server_dir).join("server.properties");
+    let properties_path = get_properties_path(state);
+    info!(
+        "Writing {} properties to: {}",
+        properties.len(),
+        properties_path.display()
+    );
 
-    let mut file = File::create(properties_path)?;
+    let mut file = File::create(&properties_path).map_err(|e| {
+        AppError::IoError(io::Error::new(
+            e.kind(),
+            format!("Failed to create/open {}: {}", properties_path.display(), e),
+        ))
+    })?;
 
-    writeln!(file, "#Minecraft server properties")?;
-    writeln!(file, "#Generated by Minecraft Server Manager")?;
-    writeln!(file, "#{}", chrono::Local::now().to_rfc3339())?;
+    // Write header comments
+    writeln!(file, "# Minecraft server properties")?;
+    writeln!(file, "# Generated by Server Manager")?; // Your app name
+    writeln!(file, "# {}", chrono::Local::now().to_rfc3339())?; // Timestamp
 
-    let mut keys: Vec<&String> = properties.keys().collect();
-    keys.sort();
+    // Sort keys for consistent output order
+    let mut sorted_keys: Vec<&String> = properties.keys().collect();
+    sorted_keys.sort_unstable(); // Faster sort if order stability isn't critical
 
-    for key in keys {
+    for key in sorted_keys {
         if let Some(value) = properties.get(key) {
             writeln!(file, "{}={}", key, value)?;
         }
     }
 
+    file.flush()?; // Ensure data is written
+
+    info!(
+        "Successfully wrote properties to {}",
+        properties_path.display()
+    );
     Ok(())
 }
 
-pub fn create_default_properties(state: Arc<AppState>) -> Result<()> {
-    let server_dir = &state.server_directory;
-    let properties_path = Path::new(server_dir).join("server.properties");
+/// Creates a default `server.properties` file if it doesn't already exist.
+pub fn create_default_properties_if_missing(state: &Arc<AppState>) -> Result<()> {
+    let properties_path = get_properties_path(state);
+    info!("Checking for default server properties file...");
 
-    if properties_path.exists() {
-        return Ok(());
+    match properties_path.try_exists() {
+        Ok(true) => {
+            debug!("server.properties already exists. No action needed.");
+            Ok(())
+        },
+        Ok(false) => {
+            info!("server.properties not found. Creating default file.");
+            // Define default properties
+            let default_properties = HashMap::from([
+                ("server-port".to_string(), "25565".to_string()),
+                ("gamemode".to_string(), "survival".to_string()),
+                ("difficulty".to_string(), "normal".to_string()),
+                ("motd".to_string(), "A Minecraft Server".to_string()), // Added motd
+                ("level-seed".to_string(), "".to_string()),
+                ("enable-command-block".to_string(), "false".to_string()),
+                ("max-players".to_string(), "20".to_string()),
+                ("spawn-protection".to_string(), "16".to_string()),
+                ("view-distance".to_string(), "10".to_string()),
+                ("simulation-distance".to_string(), "10".to_string()), // Added simulation-distance
+                ("spawn-npcs".to_string(), "true".to_string()),
+                ("spawn-animals".to_string(), "true".to_string()),
+                ("spawn-monsters".to_string(), "true".to_string()),
+                ("pvp".to_string(), "true".to_string()),
+                // Add other common defaults
+            ]);
+            // Write the defaults to the file
+            write_properties_file(&default_properties, state)
+        }
+        Err(e) => {
+            error!("Failed to check existence of {}: {}", properties_path.display(), e);
+            Err(AppError::IoError(io::Error::new(e.kind(), format!("Failed to check existence of {}: {}", properties_path.display(), e))))
+        }
+    }
+}
+
+// --- ServerConfig Integration ---
+
+/// Reads the complete server configuration (properties + Java args).
+/// Assumes ServerConfig struct exists in models::config.
+pub fn read_config_fully(state: Arc<AppState>) -> Result<ServerConfig> {
+    info!("Reading full server configuration...");
+    let properties = read_properties_file(&state)?;
+    let java_args = state.get_server_args()?; // Read args using helper
+
+    Ok(ServerConfig {
+        server_properties: properties,
+        java_args: java_args,
+        // modpack: None, // TODO: Implement modpack detection/config reading later
+    })
+}
+
+/// Updates the server configuration (properties + Java args).
+/// Assumes ServerConfig struct exists in models::config.
+pub fn update_config_fully(config: ServerConfig, state: Arc<AppState>) -> Result<()> {
+    info!("Updating full server configuration...");
+
+    // Write the server.properties part
+    write_properties_file(&config.server_properties, &state)?;
+
+    // Update the Java args in AppState
+    // This assumes Java args are *only* managed via this config update mechanism.
+    // If they can be changed elsewhere, more complex state management is needed.
+    state.set_server_args(config.java_args)?;
+    info!("Java arguments updated in application state.");
+
+    // TODO: Handle modpack updates if included in ServerConfig later
+
+    info!("Full server configuration update complete.");
+    Ok(())
+}
+
+
+// --- Deprecated? ---
+// These functions might be less useful now with read_config_fully / update_config_fully
+// Keep them if you need direct property manipulation separate from Java args.
+
+/// Updates specific properties in the `server.properties` file.
+/// Reads the existing file, merges the `new_properties`, and writes back.
+#[deprecated(note = "Prefer using update_config_fully with ServerConfig object")]
+pub fn update_properties(
+    new_properties: Vec<(String, String)>, // Expects Vec for compatibility with original code
+    state: Arc<AppState>,
+) -> Result<()> {
+    info!(
+        "Updating {} specific properties in server.properties...",
+        new_properties.len()
+    );
+    let mut current_properties = read_properties_file(&state)?;
+
+    // Merge new properties, overwriting existing keys
+    for (key, value) in new_properties {
+        if !key.is_empty() {
+            debug!("Updating property: '{}' = '{}'", key, value);
+            current_properties.insert(key, value);
+        }
     }
 
-    let default_properties = HashMap::from([
-        ("server-port".to_string(), "25565".to_string()),
-        ("gamemode".to_string(), "survival".to_string()),
-        ("difficulty".to_string(), "normal".to_string()),
-        ("level-seed".to_string(), "".to_string()),
-        ("enable-command-block".to_string(), "false".to_string()),
-        ("max-players".to_string(), "20".to_string()),
-        ("spawn-protection".to_string(), "16".to_string()),
-        ("view-distance".to_string(), "10".to_string()),
-        ("spawn-npcs".to_string(), "true".to_string()),
-        ("spawn-animals".to_string(), "true".to_string()),
-        ("spawn-monsters".to_string(), "true".to_string()),
-        ("pvp".to_string(), "true".to_string()),
-    ]);
-
-    write_properties(default_properties, state)
+    // Write the merged properties back to the file
+    write_properties_file(¤t_properties, &state)
 }
