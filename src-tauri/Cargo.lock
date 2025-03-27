@@ -676,6 +676,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "critical-section"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "790eea4361631c5e7d22598ecd5723ff611904e3344ce8720784c93e3d83d40b"
+
+[[package]]
 name = "crossbeam-channel"
 version = "0.5.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2265,6 +2271,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "lazy_static",
+ "mutex",
  "once_cell",
  "regex",
  "reqwest",
@@ -2278,6 +2285,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "tungstenite",
+ "wait-timeout",
  "walkdir",
  "which",
  "zip",
@@ -2324,6 +2332,22 @@ dependencies = [
  "thiserror 2.0.12",
  "windows-sys 0.59.0",
 ]
+
+[[package]]
+name = "mutex"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d28c89c319522a8ee27f304b1aeb4faebf652c6b7e04de8b263d715ca68a5c71"
+dependencies = [
+ "critical-section",
+ "mutex-traits",
+]
+
+[[package]]
+name = "mutex-traits"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd54cb762feb1788c74f5d3387983864d2365ca1819043d2addb76db80169102"
 
 [[package]]
 name = "native-tls"
@@ -4865,6 +4889,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fb067e4cbd1ff067d1df46c9194b5de0e98efd2810bbc95c5d5e5f25a3231150"
 dependencies = [
  "cc",
+ "libc",
+]
+
+[[package]]
+name = "wait-timeout"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09ac3b126d3914f9849036f826e054cbabdc8519970b8998ddaf3b5bd3c65f11"
+dependencies = [
  "libc",
 ]
 

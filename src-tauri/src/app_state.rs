@@ -9,6 +9,7 @@ pub struct AppState {
     pub java_path: String,
     pub server_jar: String,
     pub server_args: Vec<String>,
+    pub process_handle: ()
 }
 
 impl AppState {
