@@ -184,6 +184,7 @@ pub fn read_config_fully(state: Arc<AppState>) -> Result<ServerConfig> {
         server_properties: properties,
         java_args: java_args,
         // modpack: None, // TODO: Implement modpack detection/config reading later
+        modpack: None,
     })
 }
 
